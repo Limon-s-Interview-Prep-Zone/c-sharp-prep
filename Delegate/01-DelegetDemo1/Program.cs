@@ -42,7 +42,3 @@ namespace DelegetDemo1
         }
     }
 }
-//  Delegate: It is type-safe Function pointer. It just hold the a reference of a  function or method then call it call it for execution.
-/* Key point */
-// delegate are must be same as method that is going to to referece in delegate. Means same access modifier , same return type and same parameters.
-
