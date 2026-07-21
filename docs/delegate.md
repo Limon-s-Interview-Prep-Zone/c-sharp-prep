@@ -141,30 +141,141 @@ namespace DelegateDemo
 
 ---
 
-## 6. Real-World Production Example (বাস্তব প্রোডাকশন উদাহরণ)
+## 6. Events in C#: Why Do We Need Them? (Delegates vs. Events)
+
+### The Core Problem with Raw Delegates (কেন কেবল ডেলিগেট যথেষ্ট নয়?)
+
+#### English:
+If a class exposes a raw public delegate field:
+```csharp
+public class StockTicker
+{
+    public Action<decimal>? PriceChanged; // Raw Public Delegate
+}
+```
+External consumers can abuse this in two disastrous ways:
+1. **Accidental Overwriting (Wiping All Subscribers)**:
+   A subscriber can write `ticker.PriceChanged = MyHandler;` instead of `+=`. This silently deletes all previous subscribers attached by other classes. Worse, any external code can write `ticker.PriceChanged = null;`, wiping out the entire subscriber list.
+2. **Unauthorized Invocation**:
+   Any external caller can execute `ticker.PriceChanged(999m);` directly, arbitrarily firing an internal event that only the `StockTicker` should have the authority to raise!
+
+#### বাংলায় সমস্যা:
+যদি কোনো ক্লাসে একটি সাধারণ `public` ডেলিগেট ফিল্ড রাখা হয়, বাইরের যেকোনো কোড মারাত্মক দুটি সমস্যা তৈরি করতে পারে:
+1. **সবাইকে মুছে ফেলার ঝুঁকি (Accidental Overwrite)**:
+   সাবস্ক্রাইব করার সময় কোনো ডেভেলপার যদি ভুলবশত `+=` না দিয়ে `=` ব্যবহার করে (`ticker.PriceChanged = MyMethod;`), তবে আগের সব সাবস্ক্রাইবারের রেফারেন্স সাথে সাথে মুছে যাবে। এমনকি যে কেউ `ticker.PriceChanged = null;` লিখে পুরো লিস্ট ফাঁকা করে দিতে পারে।
+2. **অননুমোদিত এক্সিকিউশন (Unauthorized Invocation)**:
+   বাইরের যেকোনো কোড সরাসরি `ticker.PriceChanged(999m);` কল করে ইভেন্ট ট্রিগার করে দিতে পারে, যা ক্লাসের ইন্টারনাল সিকিউরিটি ও এনক্যাপসুলেশন পুরোপুরি ভেঙে দেয়।
+
+---
+
+### What the `event` Keyword Actually Does Under the Hood
+
+#### English:
+The `event` keyword is a **compiler-enforced encapsulation wrapper** over a private multicast delegate. 
+
+When you write:
+```csharp
+public class StockTicker
+{
+    public event Action<decimal>? PriceChanged; // Encapsulated Event
+}
+```
+
+The C# compiler automatically transforms it into:
+```csharp
+public class StockTicker
+{
+    // 1. Private backing delegate field (Hidden from outside world)
+    private Action<decimal>? _priceChanged;
+
+    // 2. Public Event Accessors (Restricted interface)
+    public event Action<decimal>? PriceChanged
+    {
+        add
+        {
+            // Thread-safe delegate combination (Delegate.Combine)
+            _priceChanged = (Action<decimal>)Delegate.Combine(_priceChanged, value);
+        }
+        remove
+        {
+            // Thread-safe delegate removal (Delegate.Remove)
+            _priceChanged = (Action<decimal>)Delegate.Remove(_priceChanged, value);
+        }
+    }
+
+    protected virtual void OnPriceChanged(decimal newPrice)
+    {
+        _priceChanged?.Invoke(newPrice); // Only THIS class can raise the event!
+    }
+}
+```
+
+#### The Mental Model (Field vs Property == Delegate vs Event):
+> **In C#, an `event` is to a `delegate` what a `property` is to a `field`!**
+> - A **Field** is raw storage; a **Property** wraps it with `get` and `set`.
+> - A **Delegate** is raw storage; an **Event** wraps it with `add` and `remove`.
+
+#### বাংলায় ব্যাখ্যা:
+`event` হলো ডেলিগেটের ওপর কম্পাইলারের তৈরি একটি **প্রটেকশন শিল্ড বা এনক্যাপসুলেশন র‍্যাপার**। 
+- কম্পাইলার ব্যাকগ্রাউন্ডে আসল ডেলিগেটটিকে `private` ফিল্ড বানিয়ে ফেলে।
+- বাইরের জন্য কেবল দুটি মেথড উন্মুক্ত করে: `add` (যা `+=` হ্যান্ডেল করে) এবং `remove` (যা `-=` হ্যান্ডেল করে)।
+- এর ফলে বাইরের কেউ কখনোই `=` দিয়ে অন্য কাউকে মুছতে পারে না, কিংবা ক্লাসের বাইরে থেকে ইভেন্ট কল করতে পারে না। শুধুমাত্র ইভেন্টের মালিক ক্লাসই ইভেন্টটি ট্রিগার (`.Invoke()`) করতে পারে।
+
+---
+
+### Comparison: Delegate vs. Event
+
+| Feature | Raw Delegate (`Action` / `Func`) | Event (`event Action` / `event EventHandler`) |
+| :--- | :--- | :--- |
+| **External `+=` / `-=`** | Allowed | Allowed |
+| **External `=` Assignment** | **Allowed** (DANGEROUS: wipes other listeners) | **Forbidden** (Compiler error `CS0079`) |
+| **External Direct Invocation** | **Allowed** (`obj.MyDel()`) | **Forbidden** (Compiler error `CS0070`) |
+| **Can be an Interface Member**| No | **Yes** (`event EventHandler OnChanged;`) |
+| **Underlying IL Structure** | Raw Type Reference or Field | Private Field + `add_` & `remove_` IL methods |
+| **Primary Intent** | Passing callbacks & strategies dynamically | Implementing Publisher-Subscriber pattern |
+
+---
+
+## 7. Real-World Production Example (বাস্তব প্রোডাকশন উদাহরণ)
 
 ### English:
-In high-throughput enterprise systems, delegates are heavily utilized for the **Strategy Pattern** and **Pipeline Hooks** (e.g., in ASP.NET Core middleware or resilient payment processors), allowing consumers to dynamically inject business policies without modifying core engine code.
+In enterprise systems, we combine both:
+- **Delegates** for the **Strategy Pattern** (e.g., passing custom discount calculations into an engine).
+- **Events** for the **Observer / Pub-Sub Pattern** (e.g., safely notifying audit loggers and notification services when an order completes).
 
 ### বাংলায় প্রেক্ষাপট:
-বাস্তব এন্টারপ্রাইজ অ্যাপ্লিকেশনে (যেমন: পেমেন্ট গেটওয়ে বা অর্ডার প্রসেসিং ইঞ্জিন) বিভিন্ন ধরনের ডিসকাউন্ট স্ট্র্যাটেজি বা অডিট লগিং হুক ডায়নামিকালি পাস করার জন্য ডেলিগেট একটি পারফেক্ট ডিজাইন সল্যুশন।
+প্রোডাকশন সিস্টেমে দুটিই একসাথে ব্যবহৃত হয়:
+- কোনো ক্যালকুলেশন বা পলিসি পাস করতে ব্যবহৃত হয় **Delegate** (Strategy Pattern)।
+- কাজ শেষ হওয়ার পর অন্যদের নিরাপদভাবে নোটিফাই করতে ব্যবহৃত হয় **Event** (Observer Pattern)।
 
 ```csharp
 using System;
 
 public record Order(int Id, decimal Amount, string CustomerTier);
 
+// Event Arguments holding contextual event payload
+public class OrderCompletedEventArgs : EventArgs
+{
+    public Order Order { get; }
+    public decimal FinalAmount { get; }
+
+    public OrderCompletedEventArgs(Order order, decimal finalAmount)
+    {
+        Order = order;
+        FinalAmount = finalAmount;
+    }
+}
+
 public class OrderProcessor
 {
-    // Strategy Delegate: Dynamic discount calculation
+    // 1. Strategy DELEGATE: Injected policy for computing discounts
     public Func<Order, decimal> DiscountCalculator { get; set; }
 
-    // Event Hook Delegate: Audit notification
-    public Action<Order, decimal>? OnOrderCompleted;
+    // 2. Encapsulated EVENT: Only OrderProcessor can trigger this!
+    public event EventHandler<OrderCompletedEventArgs>? OrderCompleted;
 
     public OrderProcessor(Func<Order, decimal>? discountCalculator = null)
     {
-        // Default to no discount if none provided
         DiscountCalculator = discountCalculator ?? (_ => 0m);
     }
 
@@ -173,10 +284,16 @@ public class OrderProcessor
         decimal discount = DiscountCalculator(order);
         decimal finalAmount = Math.Max(0, order.Amount - discount);
 
-        // Notify subscribers if hooked
-        OnOrderCompleted?.Invoke(order, finalAmount);
+        // Safe raising pattern (Thread-safe null-conditional invoke)
+        OnOrderCompleted(new OrderCompletedEventArgs(order, finalAmount));
 
         return finalAmount;
+    }
+
+    // Standard protected virtual event dispatcher pattern
+    protected virtual void OnOrderCompleted(OrderCompletedEventArgs e)
+    {
+        OrderCompleted?.Invoke(this, e);
     }
 }
 
@@ -184,18 +301,23 @@ public class Program
 {
     public static void Main()
     {
-        // VIP policy: 20% off
-        Func<Order, decimal> vipDiscountPolicy = order =>
-            order.CustomerTier == "VIP" ? order.Amount * 0.20m : 0m;
+        // VIP policy: 20% discount
+        var processor = new OrderProcessor(order => order.CustomerTier == "VIP" ? order.Amount * 0.20m : 0m);
 
-        var processor = new OrderProcessor(vipDiscountPolicy);
+        // Subscriber 1: Audit Logger
+        processor.OrderCompleted += (sender, e) =>
+            Console.WriteLine($"[AUDIT] Order #{e.Order.Id} completed for ${e.FinalAmount:F2}");
 
-        // Attach audit notification hook
-        processor.OnOrderCompleted += (order, finalPrice) =>
-            Console.WriteLine($"[AUDIT LOG] Order #{order.Id} processed for final amount: ${finalPrice:F2}");
+        // Subscriber 2: Notification Service
+        processor.OrderCompleted += (sender, e) =>
+            Console.WriteLine($"[EMAIL] Receipt dispatched to customer for Order #{e.Order.Id}");
 
-        var vipOrder = new Order(501, 1000m, "VIP");
-        processor.Process(vipOrder);
+        // The following line would CAUSE A COMPILER ERROR because OrderCompleted is an EVENT:
+        // processor.OrderCompleted = null;             // ERROR CS0079: The event can only appear on the left hand side of += or -=
+        // processor.OrderCompleted.Invoke(this, e);    // ERROR CS0070: The event can only be raised from within the class
+
+        var order = new Order(501, 1000m, "VIP");
+        processor.Process(order);
     }
 }
 ```
@@ -250,6 +372,38 @@ sequenceDiagram
     M3-->>Del: Return (Final Result)
     Del-->>Caller: Returns Final Result
     deactivate Del
+```
+
+### Event Encapsulation & Protection Barrier
+
+```mermaid
+flowchart LR
+    subgraph External_Code [External Callers & Subscribers]
+        Sub1[Subscriber A]
+        Sub2[Subscriber B]
+        Malicious[Accidental/Malicious Caller]
+    end
+
+    subgraph Event_Protection_Wall [Event Encapsulation Barrier]
+        AddAccessor["add { += }"]
+        RemoveAccessor["remove { -= }"]
+        BlockedInvoke["❌ .Invoke() BLOCKED (Compiler Error CS0070)"]
+        BlockedOverwrite["❌ = null BLOCKED (Compiler Error CS0079)"]
+    end
+
+    subgraph Publisher_Internal [Publisher Class Internal Scope]
+        PrivateDelegate[("private MulticastDelegate _myEvent")]
+        PublisherMethod["Publisher.TriggerEvent() -> _myEvent.Invoke()"]
+    end
+
+    Sub1 -->|+=| AddAccessor
+    Sub2 -->|-=| RemoveAccessor
+    Malicious -.->|Attempts Direct Invoke| BlockedInvoke
+    Malicious -.->|Attempts Overwrite| BlockedOverwrite
+
+    AddAccessor --> PrivateDelegate
+    RemoveAccessor --> PrivateDelegate
+    PublisherMethod -->|Safe Internal Invocation| PrivateDelegate
 ```
 
 ---
