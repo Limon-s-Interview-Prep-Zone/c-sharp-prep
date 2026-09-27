@@ -58,4 +58,8 @@ dotnet run
 | **Task-Based Asynchronous (TAP)** | [TaskBasedAsync.md](docs/TaskBasedAsync.md) | - |
 | **Generics & Patterns** | [GenericPattern.md](docs/GenericPattern.md) | - |
 | **Reflection** | [Reflection.md](docs/Reflection.md) | - |
+| **Delegates & Events** | [delegate.md](docs/delegate.md) | - |
+| **Memory Management (Stack, Heap, GC, CLR)** | [memory_management.md](docs/memory_management.md) | - |
+
+
 
