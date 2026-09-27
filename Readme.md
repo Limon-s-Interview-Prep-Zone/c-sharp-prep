@@ -46,3 +46,16 @@ Once built, you can run any console application by navigating to its folder and 
 ```bash
 dotnet run
 ```
+
+---
+
+## Study & Interview Documentation
+
+| Topic | Deep-Dive Concept Guide | Top Interview Q&A |
+| :--- | :--- | :--- |
+| **Backend / Web API** | [Backend.Prep.md](docs/Backend.Prep.md) | - |
+| **OOP Fundamentals** | [OOP.md](docs/OOP.md) | - |
+| **Task-Based Asynchronous (TAP)** | [TaskBasedAsync.md](docs/TaskBasedAsync.md) | - |
+| **Generics & Patterns** | [GenericPattern.md](docs/GenericPattern.md) | - |
+| **Reflection** | [Reflection.md](docs/Reflection.md) | - |
+

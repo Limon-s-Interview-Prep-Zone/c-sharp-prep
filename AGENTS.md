@@ -97,3 +97,25 @@ dotnet sln c-sharp-console.sln add <ProjectName>/<ProjectName>.csproj
 - **Modifying Code**: Ensure changes build without errors and preserve existing comments/explanations.
 - **Adding Examples**: If creating a new topic, create a self-contained console application, add it to `c-sharp-console.sln`, and update both `Readme.md` and this `AGENTS.md` file.
 - **Answering User Queries**: Be structured, authoritative, and encouraging. Cite relevant files in this workspace (e.g., using `[file_name](file:///path)`) to point users directly to existing code examples.
+
+---
+
+## 7. Multi-Agent Orchestrator & Command Routing
+
+The AI assistant acts as a central **Orchestrator** that routes user commands to specialized sub-agent personas and their dedicated skills in `.agents/skills/`.
+
+### Dynamic Language & Stack Target
+- **Default Target**: **C# / .NET** (for this repository).
+- **Dynamic Override**: Supports any language via `learn <lang>:<topic>`, `interview <lang>:<topic>`, or `coding <lang>:<topic>` (e.g., `learn python:asyncio`, `interview go:channels`). When copied to other repositories, automatically detects the primary stack (`package.json`, `go.mod`, `Cargo.toml`, etc.).
+
+### Command Routing Matrix
+
+| Command Trigger | Target Agent | Active Skill | Focus & Responsibilities |
+| :--- | :--- | :--- | :--- |
+| **`learn [lang:]<topic>`** | **Learning Agent** | [learning-skill](file:///.agents/skills/learning-skill/SKILL.md) | 9-step progressive bilingual tutorial (English + Bangla), CLR/runtime internals, auto-saves to `docs/<topic>.md`, updates `Readme.md`. |
+| **`interview [lang:]<topic>`** | **Interview Agent** | [interview-skill](file:///.agents/skills/interview-skill/SKILL.md) | Top 5-7 interview Q&As in bilingual format, mandatory code snippets, auto-saves to `docs/<topic>_qa.md`, updates `Readme.md`. |
+| **`coding [lang:]<topic>`** | **Coding Agent** | [coding-skill](file:///.agents/skills/coding-skill/SKILL.md) | Docs-First check (ensures `docs/<topic>.md` exists first), step-by-step plan, code generation, and verification via CLI (`dotnet build`/`run`). |
+
+When a topic is given without a keyword (e.g., just *"Async/Await"*), the Orchestrator will prompt the user to choose between **learn**, **interview**, or **coding** mode.
+
+
