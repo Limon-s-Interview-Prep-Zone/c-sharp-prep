@@ -60,6 +60,7 @@ dotnet run
 | **Reflection** | [Reflection.md](docs/Reflection.md) | - |
 | **Delegates & Events** | [delegate.md](docs/delegate.md) | - |
 | **Memory Management (Stack, Heap, GC, CLR)** | [memory_management.md](docs/memory_management.md) | - |
+| **Common Language Runtime (CLR)** | [CLR.md](docs/CLR.md) | - |
 
 
 

@@ -3,7 +3,7 @@
 ---
 
 ## 1. Explain in English
-A **Delegate** in C# is a type-safe, object-oriented function pointer. It holds a reference to a method (either static or instance) with a specific parameter list and return type. Delegates enable methods to be passed as arguments, stored in data structures, assigned to variables, and executed dynamically at runtime. 
+A **Delegate** in C# is a type-safe object that represents a reference to a method. It holds a reference to a method (either static or instance) with a specific parameter list and return type. Delegates enable methods to be passed as arguments, stored in data structures, assigned to variables, and executed dynamically at runtime. 
 
 In modern .NET, delegates form the foundation of **Events**, **LINQ queries**, **Lambda expressions**, and **Asynchronous Callbacks**.
 
