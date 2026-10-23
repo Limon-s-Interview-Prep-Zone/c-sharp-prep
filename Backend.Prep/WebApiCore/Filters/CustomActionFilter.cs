@@ -12,26 +12,34 @@ namespace WebApiCore.Filters;
 /// </summary>
 public class CustomActionFilter : IActionFilter
 {
+    private readonly ILogger<CustomActionFilter> _logger;
+
+    public CustomActionFilter(ILogger<CustomActionFilter> logger)
+    {
+        _logger = logger;
+    }
+
     public void OnActionExecuting(ActionExecutingContext context)
     {
         var actionName = context.ActionDescriptor.DisplayName;
-        Console.WriteLine($"[CustomActionFilter] BEFORE Action Method: {actionName}");
-        Console.WriteLine($"[CustomActionFilter] Action Arguments Count: {context.ActionArguments.Count}");
+        _logger.LogDebug("[ActionFilter] BEFORE executing action: {ActionName} with {ArgCount} argument(s)",
+            actionName, context.ActionArguments.Count);
     }
 
     public void OnActionExecuted(ActionExecutedContext context)
     {
         var actionName = context.ActionDescriptor.DisplayName;
-        Console.WriteLine($"[CustomActionFilter] AFTER Action Method: {actionName}");
 
         if (context.Exception != null)
         {
-            Console.WriteLine($"[CustomActionFilter] An unhandled exception was observed: {context.Exception.Message}");
-            // ActionExecutedContext allows inspecting or modifying the returned result
+            _logger.LogWarning("[ActionFilter] AFTER action: {ActionName} resulted in exception: {ErrorMessage}",
+                actionName, context.Exception.Message);
         }
-        else if (context.Result is ObjectResult objectResult)
+        else
         {
-            Console.WriteLine($"[CustomActionFilter] Action returned ObjectResult with StatusCode: {objectResult.StatusCode ?? 200}");
+            var statusCode = (context.Result as ObjectResult)?.StatusCode ?? StatusCodes.Status200OK;
+            _logger.LogDebug("[ActionFilter] AFTER action: {ActionName} completed with StatusCode {StatusCode}",
+                actionName, statusCode);
         }
     }
 }
@@ -53,20 +61,17 @@ public class ExecutionTimerActionFilter : IAsyncActionFilter
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         var actionName = context.ActionDescriptor.DisplayName ?? "UnknownAction";
-        _logger.LogInformation("[ExecutionTimerActionFilter] Starting timer for action: {ActionName}", actionName);
-
         var stopwatch = Stopwatch.StartNew();
 
-        // 1. Invoke the action method (and any inner filters)
+        // Execute action method and inner filters
         var executedContext = await next();
 
-        // 2. Stop timer after action execution completes
         stopwatch.Stop();
         var elapsedMs = stopwatch.ElapsedMilliseconds;
 
-        _logger.LogInformation("[ExecutionTimerActionFilter] Action {ActionName} completed in {ElapsedMs} ms", actionName, elapsedMs);
+        _logger.LogInformation("[ActionTimer] Action '{ActionName}' completed in {ElapsedMs} ms", actionName, elapsedMs);
 
-        // Add execution time to response headers (safe to add before ResultFilter flushes body)
+        // Safe to add headers before response body streaming begins
         if (!context.HttpContext.Response.HasStarted)
         {
             context.HttpContext.Response.Headers.TryAdd("X-Action-Time-Ms", elapsedMs.ToString());
@@ -76,41 +81,49 @@ public class ExecutionTimerActionFilter : IAsyncActionFilter
 
 /// <summary>
 /// 3. Audit Logging Action Filter Attribute (ActionFilterAttribute)
-/// Decorator attribute logging method entry, action parameters, and exit state for auditing.
+/// Production audit decorator logging user identity, action descriptor, and parameter summary.
 /// </summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
 public class AuditLogAttribute : ActionFilterAttribute
 {
     public override void OnActionExecuting(ActionExecutingContext context)
     {
+        var logger = context.HttpContext.RequestServices.GetService<ILogger<AuditLogAttribute>>();
         var user = context.HttpContext.User.Identity?.Name ?? "Anonymous";
         var action = context.ActionDescriptor.DisplayName;
+        var clientIp = context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
 
-        Console.WriteLine($"[AuditLogAttribute] User '{user}' invoked '{action}'. Parameters:");
-        foreach (var (key, value) in context.ActionArguments)
-        {
-            Console.WriteLine($"  - {key}: {value ?? "null"}");
-        }
+        logger?.LogInformation("[AuditLog] User '{User}' from IP '{ClientIp}' executing '{Action}' with {ArgCount} parameter(s)",
+            user, clientIp, action, context.ActionArguments.Count);
     }
 
     public override void OnActionExecuted(ActionExecutedContext context)
     {
+        var logger = context.HttpContext.RequestServices.GetService<ILogger<AuditLogAttribute>>();
         var action = context.ActionDescriptor.DisplayName;
         var status = context.Exception == null ? "Success" : "Failed with Exception";
-        Console.WriteLine($"[AuditLogAttribute] Action '{action}' completed with status: {status}");
+
+        logger?.LogInformation("[AuditLog] Action '{Action}' completed with status: {Status}", action, status);
     }
 }
 
 /// <summary>
-/// 4. Action-level Caching Action Filter (ActionFilterAttribute)
-/// Registered in DI or used as [ServiceFilter(typeof(CacheAsyncActionFilter))]
+/// 4. Action-level Execution Hook (ActionFilterAttribute)
+/// Registered in DI or applied via [ServiceFilter(typeof(CacheAsyncActionFilter))]
 /// </summary>
 public class CacheAsyncActionFilter : ActionFilterAttribute
 {
+    private readonly ILogger<CacheAsyncActionFilter> _logger;
+
+    public CacheAsyncActionFilter(ILogger<CacheAsyncActionFilter> logger)
+    {
+        _logger = logger;
+    }
+
     public override async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
-        Console.WriteLine("[CacheAsyncActionFilter] BEFORE action method execution.");
+        _logger.LogDebug("[ServiceFilterAction] Hook before action: {Action}", context.ActionDescriptor.DisplayName);
         var resultContext = await next();
-        Console.WriteLine("[CacheAsyncActionFilter] AFTER action method execution.");
+        _logger.LogDebug("[ServiceFilterAction] Hook after action: {Action}", context.ActionDescriptor.DisplayName);
     }
 }

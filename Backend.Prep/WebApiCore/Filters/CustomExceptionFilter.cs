@@ -1,5 +1,4 @@
 #nullable enable
-using System.Net;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
@@ -7,56 +6,66 @@ namespace WebApiCore.Filters;
 
 /// <summary>
 /// 1. Synchronous Exception Filter (IExceptionFilter)
-/// Catches unhandled exceptions thrown by Controller Actions and Action Filters.
-/// Crucial: setting context.ExceptionHandled = true notifies ASP.NET Core that the error has been processed.
+/// Fallback error handler marking context.ExceptionHandled = true to prevent unhandled process crashes.
 /// </summary>
 public class CustomExceptionFilter : IExceptionFilter
 {
+    private readonly ILogger<CustomExceptionFilter> _logger;
+
+    public CustomExceptionFilter(ILogger<CustomExceptionFilter> logger)
+    {
+        _logger = logger;
+    }
+
     public void OnException(ExceptionContext context)
     {
-        Console.WriteLine($"[CustomExceptionFilter] Handled exception: {context.Exception.GetType().Name} - {context.Exception.Message}");
+        var traceId = context.HttpContext.TraceIdentifier;
+        _logger.LogError(context.Exception, "[CustomExceptionFilter] Unhandled exception occurred: {Message} (TraceId: {TraceId})",
+            context.Exception.Message, traceId);
 
-        var errorResponse = new
+        var problemDetails = new ProblemDetails
         {
-            StatusCode = StatusCodes.Status500InternalServerError,
-            Message = "A system error occurred while processing your request.",
-            Detail = context.Exception.Message,
-            TraceId = context.HttpContext.TraceIdentifier,
-            Timestamp = DateTime.UtcNow
+            Status = StatusCodes.Status500InternalServerError,
+            Title = "An unexpected error occurred.",
+            Detail = "An internal server error occurred while processing your request.",
+            Instance = context.HttpContext.Request.Path,
+            Type = "https://httpstatuses.com/500"
         };
+        problemDetails.Extensions["traceId"] = traceId;
+        problemDetails.Extensions["timestamp"] = DateTime.UtcNow;
 
-        // Construct response and mark handled
-        context.Result = new ObjectResult(errorResponse)
+        context.Result = new ObjectResult(problemDetails)
         {
             StatusCode = StatusCodes.Status500InternalServerError
         };
 
-        context.ExceptionHandled = true; // Prevents the exception from bubbling to global middleware
+        context.ExceptionHandled = true;
     }
 }
 
 /// <summary>
 /// 2. Asynchronous Enterprise API Exception Filter (IAsyncExceptionFilter)
-/// Formats unhandled exceptions into RFC-7807 ProblemDetails with specific HTTP status codes:
-/// - KeyNotFoundException -> 404 Not Found
-/// - ArgumentException -> 400 Bad Request
-/// - UnauthorizedAccessException -> 401 Unauthorized
-/// - InvalidOperationException / Default -> 500 Internal Server Error
+/// Production-grade RFC-7807 ProblemDetails error translator:
+/// - KeyNotFoundException -> 404 Not Found (LogWarning)
+/// - ArgumentException -> 400 Bad Request (LogWarning)
+/// - UnauthorizedAccessException -> 401 Unauthorized (LogWarning)
+/// - InvalidOperationException / Other -> 500 Internal Server Error (LogError)
 /// </summary>
 public class ApiExceptionFilter : IAsyncExceptionFilter
 {
     private readonly ILogger<ApiExceptionFilter> _logger;
+    private readonly IHostEnvironment _environment;
 
-    public ApiExceptionFilter(ILogger<ApiExceptionFilter> logger)
+    public ApiExceptionFilter(ILogger<ApiExceptionFilter> logger, IHostEnvironment environment)
     {
         _logger = logger;
+        _environment = environment;
     }
 
     public Task OnExceptionAsync(ExceptionContext context)
     {
         var traceId = context.HttpContext.TraceIdentifier;
-        _logger.LogError(context.Exception, "[ApiExceptionFilter] Unhandled exception in {Path} (TraceId: {TraceId}): {Message}",
-            context.HttpContext.Request.Path, traceId, context.Exception.Message);
+        var path = context.HttpContext.Request.Path;
 
         int statusCode = context.Exception switch
         {
@@ -66,12 +75,29 @@ public class ApiExceptionFilter : IAsyncExceptionFilter
             _ => StatusCodes.Status500InternalServerError
         };
 
+        // Differentiate log severity: 4xx are client warnings; 5xx are server errors
+        if (statusCode >= 500)
+        {
+            _logger.LogError(context.Exception, "[ApiExceptionFilter] Server error {StatusCode} on {Path} (TraceId: {TraceId}): {Message}",
+                statusCode, path, traceId, context.Exception.Message);
+        }
+        else
+        {
+            _logger.LogWarning("[ApiExceptionFilter] Client exception {StatusCode} on {Path} (TraceId: {TraceId}): {Message}",
+                statusCode, path, traceId, context.Exception.Message);
+        }
+
+        // In Production, do not leak internal exception details for 500 errors
+        string detail = (statusCode >= 500 && !_environment.IsDevelopment())
+            ? "An unexpected internal server error occurred. Please contact support with the provided trace ID."
+            : context.Exception.Message;
+
         var problemDetails = new ProblemDetails
         {
             Status = statusCode,
             Title = GetTitleForStatusCode(statusCode),
-            Detail = context.Exception.Message,
-            Instance = context.HttpContext.Request.Path,
+            Detail = detail,
+            Instance = path,
             Type = $"https://httpstatuses.com/{statusCode}"
         };
 
@@ -89,16 +115,15 @@ public class ApiExceptionFilter : IAsyncExceptionFilter
 
     private static string GetTitleForStatusCode(int statusCode) => statusCode switch
     {
-        StatusCodes.Status400BadRequest => "Bad Request - Invalid Parameters",
-        StatusCodes.Status401Unauthorized => "Unauthorized Access",
-        StatusCodes.Status404NotFound => "Requested Resource Not Found",
+        StatusCodes.Status400BadRequest => "Bad Request",
+        StatusCodes.Status401Unauthorized => "Unauthorized",
+        StatusCodes.Status404NotFound => "Not Found",
         _ => "Internal Server Error"
     };
 }
 
 /// <summary>
 /// 3. Convenient Attribute for API Exception Handling
-/// Allows applying the ApiExceptionFilter to specific controllers or actions: [ApiExceptionHandling]
 /// </summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
 public class ApiExceptionHandlingAttribute : TypeFilterAttribute

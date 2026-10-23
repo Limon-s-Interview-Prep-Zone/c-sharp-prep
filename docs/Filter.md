@@ -158,6 +158,56 @@ Because C# attributes require compile-time constants for constructor arguments, 
 
 ---
 
+#### 5. When to Use an Attribute vs. When to Use options.Filters.Add (Global Registration)
+*(কখন Attribute ব্যবহার করবেন এবং কখন options.Filters.Add ব্যবহার করবেন?)*
+
+### English:
+Choosing between decorating a Controller/Action with an **Attribute** versus registering a Filter **Globally** in `Program.cs` via `options.Filters.Add<T>()` comes down to **Scope, Granularity, Parameterization, and Risk of Omission**:
+
+1. **Use an Attribute (`[MyFilter]`, `[TypeFilter]`, `[ServiceFilter]`) when**:
+   - **Granular / Endpoint-Specific Requirements**: The behavior only applies to certain controllers or actions (e.g., caching a specific heavy query `[AsyncCacheResourceFilter(30)]`, or requiring `'Admin'` access on `DELETE /products/{id}`).
+   - **Configurable Parameters Needed**: You need to pass arguments directly into the filter on a per-action basis (e.g., `[ResponseHeader("X-Feature-Tier", "Beta")]`, `[ValidatePositiveId("orderId")]`).
+   - **Opt-In Behavior**: You do not want the filter running accidentally on endpoints where it could cause bugs or unwanted performance hits (e.g., Caching on POST/PUT endpoints would corrupt data!).
+   - **Explicit Self-Documenting Code**: Developers inspecting the controller method immediately see all cross-cutting policies applied directly above the method signature.
+
+2. **Use Global Registration (`options.Filters.Add<T>()`) when**:
+   - **Universal Application-Wide Policies (Zero Tolerance for Omission)**: The policy MUST run across every single controller and endpoint in the entire app without exception. If decorating 50 controllers, a developer will eventually forget to add the attribute to a new controller.
+   - **Baseline Cross-Cutting Concerns**:
+     - *Global Diagnostic Headers*: Adding `X-Correlation-ID`, `X-Server-Name`, and timestamps to all HTTP responses (`CustomResultFilter`).
+     - *Global Request Telemetry / Latency Tracking*: Measuring overall MVC pipeline execution duration across every endpoint (`CustomResourceFilter`).
+     - *Application-Wide Fallback Error Handling*: Translating unexpected exceptions to RFC-7807 `ProblemDetails` (`CustomExceptionFilter`).
+     - *Universal Security Baselines*: Applying an `AuthorizeFilter` globally across all endpoints so that every endpoint requires authentication by default, requiring public endpoints to explicitly opt out with `[AllowAnonymous]`.
+   - **Parameterless & Stateless Operations**: Global filters cannot take action-specific constructor parameters.
+
+---
+
+### Comparison Decision Matrix: Attribute vs. Global Registration
+
+| Decision Factor | Attribute-Based Filter (`[MyFilter]`) | Global Registration (`options.Filters.Add<T>()`) |
+| :--- | :--- | :--- |
+| **Scope** | Controller-level or Action-level only | Application-wide (all controllers & actions) |
+| **Application Mechanism** | Declarative Attribute (`[TypeFilter]`, `[ServiceFilter]`, Attribute) | Imperative in `Program.cs` (`builder.Services.AddControllers(...)`) |
+| **Parameter Passing** | **YES** (e.g., `[ResponseHeader("X-Key", "Val")]`, `[Cache(30)]`) | **NO** (Parameters cannot vary per action) |
+| **Risk of Developer Omission** | **High** (easy to forget on new controllers) | **Zero** (automatically inherited by all future controllers) |
+| **Side-Effect Risk** | **Low** (only runs where explicitly requested) | **High** (dangerous if applied to inappropriate HTTP methods, e.g., caching POST) |
+| **Ideal For** | Caching, specific role checks, route ID validation, null checks | Correlation ID, global execution profiling, global exception fallback |
+
+---
+
+### বাংলায় সহজ ব্যাখ্যা:
+
+#### কখন Attribute ব্যবহার করবেন?
+- যখন কোনো নির্দিষ্ট মেথড বা কন্ট্রোলারে স্পেশাল লজিক দরকার (যেমন: কেবল প্রোডাক্টের GET মেথডে ৩০ সেকেন্ডের ক্যাশ দরকার `[AsyncCacheResourceFilter(30)]`, বা শুধু ডিলিট মেথডে অ্যাডমিন পারমিশন দরকার `[TypeFilter(typeof(CustomAuthorizationFilter), Arguments = ...)]`)।
+- যখন মেথডের ওপর ভিত্তি করে বিভিন্ন প্যারামিটার পাস করতে হয় (যেমন: `[ValidatePositiveId("orderId")]`)।
+- কোড দেখেই যাতে পরিষ্কার বোঝা যায় এই মেথডে কী কী ফিল্টার কাজ করছে (Self-documenting)।
+
+#### কখন Global Registration (options.Filters.Add) ব্যবহার করবেন?
+- যখন পুরো অ্যাপ্লিকেশনের **প্রতিটি মেথডে বাধ্যতামূলকভাবে** কোনো লজিক চালাতেই হবে—যা কেউ কোনো নতুন কন্ট্রোলার তৈরি করলেও যেন ভুলবশত মিস না হয় (Zero Omission Risk)।
+- যেমন: প্রতিটি রেসপন্সে `X-Correlation-ID` হেডার বসানো, পুরো পাইপলাইনের সময় মনিটর করা, বা সিস্টেমে আনহ্যান্ডেলড এরর ঘটলে গ্লোবালি ধরা।
+- এটি সবার জন্য সমান ও অভিন্ন হতে হবে; কোনো মেথডভিত্তিক আলাদা প্যারামিটার নেওয়া সম্ভব নয়।
+
+---
+
 ### Middleware vs. Filter: The Essential Architectural Difference
 
 | Comparison Aspect | Middleware | Filter |
@@ -539,6 +589,12 @@ Consider an HTTP POST request to create an order: `POST /api/orders` with body `
 ### Q5: Why is Resource Filter placed before Model Binding, and what is its primary use case?
 - **English Pitch**: Model Binding is computationally expensive because it reads and parses the incoming HTTP stream, extracts JSON/forms, and validates object constraints. By placing the Resource Filter **before** Model Binding, ASP.NET Core allows caching filters to return a cached response immediately, completely bypassing unnecessary CPU and memory allocation for model binding and validation.
 - **বাংলায় ব্যাখ্যা**: মডেল বাইন্ডিং একটি ব্যয়বহুল প্রক্রিয়া—কারণ এটি পুরো HTTP বডি পড়ে JSON পার্স করে অবজেক্ট বানায়। রিসোর্স ফিল্টারকে মডেল বাইন্ডিংয়ের ঠিক আগে রাখা হয়েছে যাতে ক্যাশে ডেটা থাকলে মডেল বাইন্ডিংয়ের পেছনে অযথা প্রসেসর ও মেমোরি খরচ না করে সাথে সাথে ক্যাশ থেকে উত্তর দিয়ে দেওয়া যায়।
+
+---
+
+### Q6: When should you register a filter globally in `Program.cs` (`options.Filters.Add`) vs applying it as an Attribute (`[MyFilter]`)?
+- **English Pitch**: Use **Global Registration** for mandatory, application-wide baseline policies where omission is unacceptable—such as injecting correlation IDs into every response, global performance telemetry, or global RFC-7807 exception translation. Use an **Attribute** when the behavior is granular, opt-in, endpoint-specific (like caching a specific GET query), or requires custom per-action arguments (like `[ValidatePositiveId("id")]` or `[Authorize(Roles = "Admin")]`).
+- **বাংলায় ব্যাখ্যা**: পুরো অ্যাপ্লিকেশনের সব কন্ট্রোলারে কোনো কিছু বাধ্যতামূলকভাবে নিশ্চিত করতে (যাতে কেউ নতুন কন্ট্রোলার বানালেও ভুল করে মিস না করে)—যেমন প্রতিটি রেসপন্সে ট্র্যাকিং হেডার বসানো বা গ্লোবাল এরর হ্যান্ডলিং—তখন `options.Filters.Add` দিয়ে গ্লোবালি রেজিস্টার করতে হয়। আর যখন কোনো নির্দিষ্ট এন্ডিং পয়েন্টে স্পেশাল নিয়ম বা প্যারামিটার লাগে (যেমন নির্দিষ্ট মেথডে ক্যাশিং বা অ্যাডমিন পারমিশন)—তখন `[Attribute]` ব্যবহার করা হয়।
 
 ---
 

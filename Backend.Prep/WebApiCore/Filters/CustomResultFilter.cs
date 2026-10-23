@@ -7,68 +7,86 @@ namespace WebApiCore.Filters;
 /// <summary>
 /// 1. Synchronous Result Filter (IResultFilter)
 /// Runs immediately BEFORE and AFTER the action result is executed (e.g. JSON serialization).
-/// CRITICAL: HTTP headers MUST be set in OnResultExecuting, BEFORE response streaming begins.
+/// Injects diagnostic tracing headers safely before response stream begins.
 /// </summary>
 public class CustomResultFilter : IResultFilter
 {
+    private readonly ILogger<CustomResultFilter> _logger;
+
+    public CustomResultFilter(ILogger<CustomResultFilter> logger)
+    {
+        _logger = logger;
+    }
+
     public void OnResultExecuting(ResultExecutingContext context)
     {
-        Console.WriteLine("[CustomResultFilter] OnResultExecuting: Adding diagnostic response headers...");
+        if (!context.HttpContext.Response.HasStarted)
+        {
+            context.HttpContext.Response.Headers.TryAdd("X-Correlation-ID", context.HttpContext.TraceIdentifier);
+            context.HttpContext.Response.Headers.TryAdd("X-Processed-At", DateTime.UtcNow.ToString("o"));
+            context.HttpContext.Response.Headers.TryAdd("X-Server-Name", Environment.MachineName);
+        }
 
-        // Safe to add headers here because response body serialization hasn't started yet
-        context.HttpContext.Response.Headers.TryAdd("X-Correlation-ID", Guid.NewGuid().ToString("N"));
-        context.HttpContext.Response.Headers.TryAdd("X-Processed-At", DateTime.UtcNow.ToString("o"));
-        context.HttpContext.Response.Headers.TryAdd("X-Server-Name", Environment.MachineName);
+        _logger.LogDebug("[ResultFilter] Injected diagnostic headers for {Path}", context.HttpContext.Request.Path);
     }
 
     public void OnResultExecuted(ResultExecutedContext context)
     {
-        // Response headers are READ-ONLY at this stage; response body has already been flushed to the socket
-        Console.WriteLine($"[CustomResultFilter] OnResultExecuted: Response generation completed. Canceled: {context.Canceled}");
+        _logger.LogDebug("[ResultFilter] Response body flushed for {Path} (Canceled: {Canceled})",
+            context.HttpContext.Request.Path, context.Canceled);
     }
 }
 
 /// <summary>
 /// 2. Asynchronous Result Filter (IAsyncResultFilter)
-/// Demonstrates async result execution pipeline interception.
+/// Demonstrates async result pipeline interception without blocking.
 /// </summary>
 public class AsyncResultFilter : IAsyncResultFilter
 {
+    private readonly ILogger<AsyncResultFilter> _logger;
+
+    public AsyncResultFilter(ILogger<AsyncResultFilter> logger)
+    {
+        _logger = logger;
+    }
+
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
-        Console.WriteLine("[AsyncResultFilter] BEFORE IActionResult execution (Pre-serialization)...");
+        if (!context.HttpContext.Response.HasStarted)
+        {
+            context.HttpContext.Response.Headers.TryAdd("X-Filter-Pipeline", "AsyncResultFilter");
+        }
 
-        // Set response header before serialization begins
-        context.HttpContext.Response.Headers.TryAdd("X-Filter-Type", "AsyncResultFilter");
-
-        // Execute the result (serializes JSON to HTTP response body)
         var executedContext = await next();
 
-        Console.WriteLine("[AsyncResultFilter] AFTER IActionResult execution (Post-serialization).");
+        _logger.LogDebug("[AsyncResultFilter] Completed serialization for {Path}", context.HttpContext.Request.Path);
     }
 }
 
 /// <summary>
 /// 3. Standardized Envelope Result Filter (IAsyncResultFilter)
-/// Wraps raw action result objects into a standardized enterprise API envelope:
-/// { "success": true, "data": ..., "traceId": ... }
+/// Wraps successful action results into a standardized enterprise API envelope:
+/// { "success": true, "data": ..., "traceId": ..., "timestamp": ... }
+/// Skips wrapping on ProblemDetails, empty results, or already wrapped responses.
 /// </summary>
 public class StandardizedResponseEnvelopeFilter : IAsyncResultFilter
 {
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
-        // Inspect the action result before serialization
-        if (context.Result is ObjectResult objectResult && objectResult.Value != null)
+        // Only wrap successful ObjectResults (e.g., 200 OK) that are not ProblemDetails
+        if (context.Result is ObjectResult objectResult &&
+            objectResult.Value != null &&
+            objectResult.Value is not ProblemDetails &&
+            (objectResult.StatusCode == null || (objectResult.StatusCode >= 200 && objectResult.StatusCode < 300)))
         {
             var traceId = context.HttpContext.TraceIdentifier;
-
-            // Avoid double wrapping if already an envelope
             var valueType = objectResult.Value.GetType();
+
             if (!valueType.Name.StartsWith("ApiResponse"))
             {
                 objectResult.Value = new
                 {
-                    Success = objectResult.StatusCode is null or >= 200 and < 300,
+                    Success = true,
                     Data = objectResult.Value,
                     TraceId = traceId,
                     Timestamp = DateTime.UtcNow
@@ -76,7 +94,6 @@ public class StandardizedResponseEnvelopeFilter : IAsyncResultFilter
             }
         }
 
-        // Proceed to serialize wrapped response
         await next();
     }
 }
@@ -99,6 +116,9 @@ public class ResponseHeaderAttribute : ResultFilterAttribute
 
     public override void OnResultExecuting(ResultExecutingContext context)
     {
-        context.HttpContext.Response.Headers.TryAdd(_name, _value);
+        if (!context.HttpContext.Response.HasStarted)
+        {
+            context.HttpContext.Response.Headers.TryAdd(_name, _value);
+        }
     }
 }

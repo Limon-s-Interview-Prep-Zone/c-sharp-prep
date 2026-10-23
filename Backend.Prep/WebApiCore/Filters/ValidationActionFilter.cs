@@ -1,3 +1,4 @@
+#nullable enable
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
@@ -5,121 +6,33 @@ namespace WebApiCore.Filters;
 
 /// <summary>
 /// 1. Synchronous Validation Filter (IActionFilter)
-/// Checks ModelState.IsValid and short-circuits the pipeline before the action runs.
+/// Checks ModelState.IsValid and short-circuits with RFC 7807 ValidationProblemDetails before the action runs.
 /// </summary>
 public class ValidationActionFilter : IActionFilter
 {
-    public void OnActionExecuting(ActionExecutingContext context)
+    private readonly ILogger<ValidationActionFilter> _logger;
+
+    public ValidationActionFilter(ILogger<ValidationActionFilter> logger)
     {
-        Console.WriteLine($"[ValidationActionFilter] OnActionExecuting called. ModelState.IsValid: {context.ModelState.IsValid}");
-        if (!context.ModelState.IsValid)
-        {
-            Console.WriteLine("[ValidationActionFilter] Validation error detected. Returning BadRequest.");
-            context.Result = new BadRequestObjectResult(context.ModelState);
-        }
+        _logger = logger;
     }
 
-    public void OnActionExecuted(ActionExecutedContext context)
-    {
-        Console.WriteLine("[ValidationActionFilter] OnActionExecuted called.");
-    }
-}
-
-/// <summary>
-/// 2. Asynchronous Validation Filter (IAsyncActionFilter)
-/// Idiomatic modern .NET async pattern for non-blocking execution.
-/// </summary>
-public class AsyncValidationActionFilter : IAsyncActionFilter
-{
-    public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
-    {
-        Console.WriteLine($"[AsyncValidationActionFilter] Checking ModelState.IsValid: {context.ModelState.IsValid}");
-
-        if (!context.ModelState.IsValid)
-        {
-            Console.WriteLine("[AsyncValidationActionFilter] Validation failed. Short-circuiting pipeline.");
-            context.Result = new BadRequestObjectResult(context.ModelState);
-            return; // Short-circuit: do NOT call next()
-        }
-
-        // Proceed to next filter or action method
-        var executedContext = await next();
-
-        Console.WriteLine("[AsyncValidationActionFilter] Action executed successfully.");
-    }
-}
-
-/// <summary>
-/// 3. Attribute-Based Validation Filter (ActionFilterAttribute)
-/// Usable directly as [ValidateModel] on specific controllers or action methods.
-/// </summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
-public class ValidateModelAttribute : ActionFilterAttribute
-{
-    public override void OnActionExecuting(ActionExecutingContext context)
-    {
-        Console.WriteLine($"[ValidateModelAttribute] Checking ModelState (IsValid: {context.ModelState.IsValid})");
-        if (!context.ModelState.IsValid)
-        {
-            Console.WriteLine("[ValidateModelAttribute] Action-level validation failed.");
-            context.Result = new BadRequestObjectResult(context.ModelState);
-        }
-    }
-}
-
-/// <summary>
-/// 4. Null Payload Validation Filter (ActionFilterAttribute)
-/// Guards against empty/null request body when clients post empty JSON or non-matching schemas.
-/// Prevents NullReferenceException inside controller action methods.
-/// </summary>
-[AttributeUsage(AttributeTargets.Method)]
-public class ValidateNullPayloadAttribute : ActionFilterAttribute
-{
-    public override void OnActionExecuting(ActionExecutingContext context)
-    {
-        foreach (var argument in context.ActionArguments)
-        {
-            if (argument.Value is null)
-            {
-                Console.WriteLine($"[ValidateNullPayloadAttribute] Argument '{argument.Key}' is null. Short-circuiting with 400.");
-                context.Result = new BadRequestObjectResult(new
-                {
-                    StatusCode = 400,
-                    Message = $"Request payload for parameter '{argument.Key}' cannot be null or empty."
-                });
-                return;
-            }
-        }
-    }
-}
-
-/// <summary>
-/// 5. Standardized RFC 7807 ProblemDetails Validation Filter
-/// Formats validation errors into a consistent, enterprise-grade RFC 7807 ProblemDetails response.
-/// </summary>
-public class StandardizedValidationFilter : IActionFilter
-{
     public void OnActionExecuting(ActionExecutingContext context)
     {
         if (!context.ModelState.IsValid)
         {
-            var errors = context.ModelState
-                .Where(x => x.Value?.Errors.Count > 0)
-                .ToDictionary(
-                    kvp => kvp.Key,
-                    kvp => kvp.Value!.Errors.Select(e => e.ErrorMessage).ToArray()
-                );
+            _logger.LogWarning("[ValidationFilter] Model validation failed on {Path}. Short-circuiting pipeline.",
+                context.HttpContext.Request.Path);
 
-            var problemDetails = new ValidationProblemDetails(errors)
+            var problemDetails = new ValidationProblemDetails(context.ModelState)
             {
                 Type = "https://tools.ietf.org/html/rfc7231#section-6.5.1",
                 Title = "One or more validation errors occurred.",
                 Status = StatusCodes.Status400BadRequest,
-                Detail = "Please refer to the errors property for detailed validation failures.",
                 Instance = context.HttpContext.Request.Path
             };
+            problemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
 
-            Console.WriteLine("[StandardizedValidationFilter] Returning RFC 7807 ValidationProblemDetails.");
             context.Result = new BadRequestObjectResult(problemDetails);
         }
     }
@@ -130,8 +43,105 @@ public class StandardizedValidationFilter : IActionFilter
 }
 
 /// <summary>
-/// 6. Route Parameter / ID Validation Filter (ActionFilterAttribute)
-/// Validates route parameters (e.g., id must be > 0) before hitting database / services.
+/// 2. Asynchronous Validation Filter (IAsyncActionFilter)
+/// Idiomatic modern .NET async pattern for non-blocking model validation.
+/// </summary>
+public class AsyncValidationActionFilter : IAsyncActionFilter
+{
+    private readonly ILogger<AsyncValidationActionFilter> _logger;
+
+    public AsyncValidationActionFilter(ILogger<AsyncValidationActionFilter> logger)
+    {
+        _logger = logger;
+    }
+
+    public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+    {
+        if (!context.ModelState.IsValid)
+        {
+            _logger.LogWarning("[AsyncValidationFilter] Model validation failed on {Path}.", context.HttpContext.Request.Path);
+
+            var problemDetails = new ValidationProblemDetails(context.ModelState)
+            {
+                Type = "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+                Title = "Validation failure",
+                Status = StatusCodes.Status400BadRequest,
+                Instance = context.HttpContext.Request.Path
+            };
+            problemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
+
+            context.Result = new BadRequestObjectResult(problemDetails);
+            return; // Short-circuit: do not call next()
+        }
+
+        await next();
+    }
+}
+
+/// <summary>
+/// 3. Attribute-Based Model Validation Filter (ActionFilterAttribute)
+/// Usable directly as [ValidateModel] on specific controllers or action methods.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+public class ValidateModelAttribute : ActionFilterAttribute
+{
+    public override void OnActionExecuting(ActionExecutingContext context)
+    {
+        if (!context.ModelState.IsValid)
+        {
+            var logger = context.HttpContext.RequestServices.GetService<ILogger<ValidateModelAttribute>>();
+            logger?.LogWarning("[ValidateModel] Validation error on {Path}", context.HttpContext.Request.Path);
+
+            var problemDetails = new ValidationProblemDetails(context.ModelState)
+            {
+                Type = "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+                Title = "Validation failed for one or more fields.",
+                Status = StatusCodes.Status400BadRequest,
+                Instance = context.HttpContext.Request.Path
+            };
+            problemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
+
+            context.Result = new BadRequestObjectResult(problemDetails);
+        }
+    }
+}
+
+/// <summary>
+/// 4. Null Payload Guard Filter (ActionFilterAttribute)
+/// Guards against empty or non-matching request bodies when clients post empty JSON.
+/// </summary>
+[AttributeUsage(AttributeTargets.Method)]
+public class ValidateNullPayloadAttribute : ActionFilterAttribute
+{
+    public override void OnActionExecuting(ActionExecutingContext context)
+    {
+        foreach (var argument in context.ActionArguments)
+        {
+            if (argument.Value is null)
+            {
+                var logger = context.HttpContext.RequestServices.GetService<ILogger<ValidateNullPayloadAttribute>>();
+                logger?.LogWarning("[ValidateNullPayload] Argument '{Key}' is null on {Path}", argument.Key, context.HttpContext.Request.Path);
+
+                var problem = new ProblemDetails
+                {
+                    Status = StatusCodes.Status400BadRequest,
+                    Title = "Missing Request Body",
+                    Detail = $"The request body for parameter '{argument.Key}' cannot be null or empty.",
+                    Instance = context.HttpContext.Request.Path,
+                    Type = "https://httpstatuses.com/400"
+                };
+                problem.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
+
+                context.Result = new BadRequestObjectResult(problem);
+                return;
+            }
+        }
+    }
+}
+
+/// <summary>
+/// 5. Route Parameter Validation Filter (ActionFilterAttribute)
+/// Ensures route IDs are positive integers before querying databases or services.
 /// </summary>
 [AttributeUsage(AttributeTargets.Method)]
 public class ValidatePositiveIdAttribute : ActionFilterAttribute
@@ -145,17 +155,22 @@ public class ValidatePositiveIdAttribute : ActionFilterAttribute
 
     public override void OnActionExecuting(ActionExecutingContext context)
     {
-        if (context.ActionArguments.TryGetValue(_parameterName, out var value) && value is int id)
+        if (context.ActionArguments.TryGetValue(_parameterName, out var value) && value is int id && id <= 0)
         {
-            if (id <= 0)
+            var logger = context.HttpContext.RequestServices.GetService<ILogger<ValidatePositiveIdAttribute>>();
+            logger?.LogWarning("[ValidatePositiveId] Parameter '{ParamName}' has invalid value '{Value}'", _parameterName, id);
+
+            var problem = new ProblemDetails
             {
-                Console.WriteLine($"[ValidatePositiveIdAttribute] Invalid {_parameterName}: {id}. Must be > 0.");
-                context.Result = new BadRequestObjectResult(new
-                {
-                    StatusCode = 400,
-                    Message = $"The parameter '{_parameterName}' must be a positive integer greater than 0."
-                });
-            }
+                Status = StatusCodes.Status400BadRequest,
+                Title = "Invalid Identifier",
+                Detail = $"The route parameter '{_parameterName}' must be a positive integer greater than 0.",
+                Instance = context.HttpContext.Request.Path,
+                Type = "https://httpstatuses.com/400"
+            };
+            problem.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
+
+            context.Result = new BadRequestObjectResult(problem);
         }
     }
 }
