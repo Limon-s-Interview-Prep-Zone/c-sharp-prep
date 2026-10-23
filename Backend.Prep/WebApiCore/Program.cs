@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using WebApiCore.Filters;
 using WebApiCore.Options;
@@ -45,16 +46,24 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 
 builder.Services.AddMemoryCache();
-builder.Services.AddScoped<CacheAsyncActionFilter>(); // instantiate in di
+
+// Register filters in DI for [ServiceFilter] and DI resolution
+builder.Services.AddScoped<CacheAsyncActionFilter>();
+builder.Services.AddScoped<ExecutionTimerActionFilter>();
+builder.Services.AddScoped<ApiExceptionFilter>();
+builder.Services.AddScoped<StandardizedResponseEnvelopeFilter>();
 
 builder.Services.AddControllers(options =>
 {
-    // options.Filters.Add<CustomAuthorizationFilter>(); //globally
-    options.Filters.Add<CustomResourceFilter>();
-    options.Filters.Add<CustomActionFilter>();
-    options.Filters.Add<CustomResultFilter>();
-    options.Filters.Add<CustomExceptionFilter>();
-    options.Filters.Add<AsyncCacheResourceFilter>();
+    // Global filters that execute across all endpoints:
+    options.Filters.Add<CustomResourceFilter>();  // Tracks overall pipeline duration
+    options.Filters.Add<CustomActionFilter>();    // Logs before and after action execution
+    options.Filters.Add<CustomResultFilter>();    // Injects diagnostic headers (X-Correlation-ID, X-Processed-At)
+});
+
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{
+    options.SuppressModelStateInvalidFilter = true;
 });
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();

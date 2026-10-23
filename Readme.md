@@ -11,8 +11,7 @@ Welcome to the **C# Console Application Collection** repository! This repository
     - [Prerequisites](#prerequisites)
   - [Installation](#installation)
     - [Usage](#usage)
-  - [OOP](https://github.com/Limon-s-Interview-Prep-Zone/c-sharp-console/blob/master/OOP/OOP.md)
-  - [Task and Parallel Programming](https://github.com/Limon-s-Interview-Prep-Zone/c-sharp-console/blob/master/TaskBasedAsync/TaskBasedAsync.md)
+  - [Study \& Interview Documentation](#study--interview-documentation)
 
 ## Overview
 
@@ -61,6 +60,7 @@ dotnet run
 | **Delegates & Events** | [delegate.md](docs/delegate.md) | - |
 | **Memory Management (Stack, Heap, GC, CLR)** | [memory_management.md](docs/memory_management.md) | - |
 | **Common Language Runtime (CLR)** | [CLR.md](docs/CLR.md) | - |
+| **ASP.NET Core Filters** | [Filter.md](docs/Filter.md) | - |
 
 
 
