@@ -121,6 +121,229 @@ When an incoming HTTP request passes through the middleware pipeline and is rout
 
 ---
 
+### The 5 Filter Types: Interfaces and Base Classes to Inherit / Implement
+*(কোন ফিল্টারের জন্য কোন Interface বা Base Class Inherit করতে হয়?)*
+
+All filter interfaces in ASP.NET Core belong to the **`Microsoft.AspNetCore.Mvc.Filters`** namespace and inherit from the root marker interface **`IFilterMetadata`**.
+
+#### Quick Reference Matrix:
+
+| Filter Stage | Synchronous Interface | Asynchronous Interface | Base Class to Inherit (Attribute) | Primary Method Signature |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Authorization** | `IAuthorizationFilter` | `IAsyncAuthorizationFilter` | `Attribute`, `IAuthorizationFilter` (or `AuthorizeAttribute`) | `OnAuthorizationAsync(AuthorizationFilterContext context)` |
+| **2. Resource** | `IResourceFilter` | `IAsyncResourceFilter` | `Attribute`, `IResourceFilter` / `IAsyncResourceFilter` | `OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)` |
+| **3. Action** | `IActionFilter` | `IAsyncActionFilter` | **`ActionFilterAttribute`** | `OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)` |
+| **4. Exception** | `IExceptionFilter` | `IAsyncExceptionFilter` | **`ExceptionFilterAttribute`** | `OnException(ExceptionContext context)` / `OnExceptionAsync(...)` |
+| **5. Result** | `IResultFilter` | `IAsyncResultFilter` | **`ResultFilterAttribute`** | `OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)` |
+| **Always-Run Result** | `IAlwaysRunResultFilter` | `IAsyncAlwaysRunResultFilter` | `Attribute`, `IAsyncAlwaysRunResultFilter` | Runs even when earlier filters short-circuit! |
+| **Ordering Control** | `IOrderedFilter` | `IOrderedFilter` | (Implemented on all base filter attributes) | `int Order { get; set; }` |
+
+---
+
+#### 1. Authorization Filter: `IAuthorizationFilter` / `IAsyncAuthorizationFilter`
+- **When to use**: To verify authentication, validate API keys, verify scopes/roles, or short-circuit unauthorized requests before anything else runs.
+- **Interfaces**:
+  ```csharp
+  public interface IAuthorizationFilter : IFilterMetadata
+  {
+      void OnAuthorization(AuthorizationFilterContext context);
+  }
+
+  public interface IAsyncAuthorizationFilter : IFilterMetadata
+  {
+      Task OnAuthorizationAsync(AuthorizationFilterContext context);
+  }
+  ```
+- **How to Inherit / Implement**:
+  ```csharp
+  // Inherit Attribute and implement IAsyncAuthorizationFilter for custom token/key checks:
+  [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+  public class CustomApiKeyAuthAttribute : Attribute, IAsyncAuthorizationFilter
+  {
+      public Task OnAuthorizationAsync(AuthorizationFilterContext context)
+      {
+          if (!context.HttpContext.Request.Headers.ContainsKey("X-Api-Key"))
+          {
+              // Short-circuit immediately
+              context.Result = new UnauthorizedObjectResult("Missing API Key");
+          }
+          return Task.CompletedTask;
+      }
+  }
+  ```
+
+---
+
+#### 2. Resource Filter: `IResourceFilter` / `IAsyncResourceFilter`
+- **When to use**: Runs **before Model Binding** and surrounds the rest of the pipeline. Perfect for response caching (cache hit skips model binding completely) or rate limiting.
+- **Interfaces**:
+  ```csharp
+  public interface IResourceFilter : IFilterMetadata
+  {
+      void OnResourceExecuting(ResourceExecutingContext context);
+      void OnResourceExecuted(ResourceExecutedContext context);
+  }
+
+  public interface IAsyncResourceFilter : IFilterMetadata
+  {
+      Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next);
+  }
+  ```
+- **How to Inherit / Implement**:
+  ```csharp
+  [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+  public class InMemoryCacheResourceFilterAttribute : Attribute, IAsyncResourceFilter
+  {
+      public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)
+      {
+          string cacheKey = context.HttpContext.Request.Path;
+          if (SimpleMemoryCache.TryGetValue(cacheKey, out var cachedData))
+          {
+              // Short-circuit: Model binding is completely bypassed!
+              context.Result = new OkObjectResult(cachedData);
+              return;
+          }
+
+          var executedContext = await next(); // Runs model binding, action, and result
+
+          if (executedContext.Result is OkObjectResult okResult)
+          {
+              SimpleMemoryCache.Set(cacheKey, okResult.Value);
+          }
+      }
+  }
+  ```
+
+---
+
+#### 3. Action Filter: `IActionFilter` / `IAsyncActionFilter` / `ActionFilterAttribute`
+- **When to use**: Intercepts model binding results, validates `ModelState.IsValid`, inspects or modifies method arguments (`context.ActionArguments`), or profiles action execution time.
+- **Interfaces & Base Class**:
+  ```csharp
+  public interface IActionFilter : IFilterMetadata
+  {
+      void OnActionExecuting(ActionExecutingContext context);
+      void OnActionExecuted(ActionExecutedContext context);
+  }
+
+  public interface IAsyncActionFilter : IFilterMetadata
+  {
+      Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next);
+  }
+
+  // Base Class: ActionFilterAttribute implements IActionFilter, IAsyncActionFilter, IResultFilter, IAsyncResultFilter, IOrderedFilter
+  public abstract class ActionFilterAttribute : Attribute, IActionFilter, IAsyncActionFilter, IResultFilter, IAsyncResultFilter, IOrderedFilter
+  { ... }
+  ```
+- **How to Inherit / Implement**:
+  ```csharp
+  // Way A: Inherit directly from ActionFilterAttribute (Attribute-first)
+  public class LogExecutionTimeAttribute : ActionFilterAttribute
+  {
+      public override async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+      {
+          var stopwatch = Stopwatch.StartNew();
+          var result = await next(); // Action executes
+          stopwatch.Stop();
+          context.HttpContext.Response.Headers["X-Execution-Time-Ms"] = stopwatch.ElapsedMilliseconds.ToString();
+      }
+  }
+
+  // Way B: Implement IAsyncActionFilter directly (for DI injection with [TypeFilter] or [ServiceFilter])
+  public class ModelValidationFilter : IAsyncActionFilter
+  {
+      public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+      {
+          if (!context.ModelState.IsValid)
+          {
+              context.Result = new BadRequestObjectResult(context.ModelState);
+              return;
+          }
+          await next();
+      }
+  }
+  ```
+
+---
+
+#### 4. Exception Filter: `IExceptionFilter` / `IAsyncExceptionFilter` / `ExceptionFilterAttribute`
+- **When to use**: Catches unhandled exceptions thrown inside controller actions or other filters; formats them into custom HTTP error payloads (`ProblemDetails`).
+- **Interfaces & Base Class**:
+  ```csharp
+  public interface IExceptionFilter : IFilterMetadata
+  {
+      void OnException(ExceptionContext context);
+  }
+
+  public interface IAsyncExceptionFilter : IFilterMetadata
+  {
+      Task OnExceptionAsync(ExceptionContext context);
+  }
+
+  // Base Class
+  public abstract class ExceptionFilterAttribute : Attribute, IExceptionFilter, IAsyncExceptionFilter, IOrderedFilter
+  { ... }
+  ```
+- **How to Inherit / Implement**:
+  ```csharp
+  // Inherit from ExceptionFilterAttribute or implement IExceptionFilter:
+  public class DomainExceptionFilterAttribute : ExceptionFilterAttribute
+  {
+      public override void OnException(ExceptionContext context)
+      {
+          if (context.Exception is KeyNotFoundException notFound)
+          {
+              context.Result = new NotFoundObjectResult(new { error = notFound.Message });
+              context.ExceptionHandled = true; // Signals ASP.NET Core that error was handled
+          }
+      }
+  }
+  ```
+
+---
+
+#### 5. Result Filter: `IResultFilter` / `IAsyncResultFilter` / `ResultFilterAttribute`
+- **When to use**: Surrounds the execution of `IActionResult` (e.g., JSON serialization, view rendering). Used for standardizing API envelope formats, injecting custom response headers, or auditing generated payloads.
+- **Interfaces & Base Class**:
+  ```csharp
+  public interface IResultFilter : IFilterMetadata
+  {
+      void OnResultExecuting(ResultExecutingContext context);
+      void OnResultExecuted(ResultExecutedContext context);
+  }
+
+  public interface IAsyncResultFilter : IFilterMetadata
+  {
+      Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next);
+  }
+
+  // Base Class
+  public abstract class ResultFilterAttribute : Attribute, IResultFilter, IAsyncResultFilter, IOrderedFilter
+  { ... }
+  ```
+- **How to Inherit / Implement**:
+  ```csharp
+  // Inherit from ResultFilterAttribute:
+  public class StandardApiEnvelopeAttribute : ResultFilterAttribute
+  {
+      public override void OnResultExecuting(ResultExecutingContext context)
+      {
+          if (context.Result is OkObjectResult okResult)
+          {
+              // Wrap data in standardized envelope before serialization
+              context.Result = new OkObjectResult(new
+              {
+                  success = true,
+                  data = okResult.Value,
+                  timestamp = DateTime.UtcNow
+              });
+          }
+      }
+  }
+  ```
+
+---
+
 ### Core Mechanics & Internal Rules
 
 #### 1. Synchronous vs. Asynchronous Filters
