@@ -58,10 +58,11 @@ dotnet run
 | **Generics & Patterns** | [GenericPattern.md](docs/GenericPattern.md) | - |
 | **Reflection** | [Reflection.md](docs/Reflection.md) | - |
 | **Delegates & Events** | [delegate.md](docs/delegate.md) | - |
-| **Memory Management (Stack, Heap, GC, CLR)** | [memory_management.md](docs/memory_management.md) | - |
-| **Common Language Runtime (CLR)** | [CLR.md](docs/CLR.md) | - |
+| **Memory Management (Stack, Heap, GC, CLR)** | [memory_management.md](docs/memory_management.md) | [memory_management_qa.md](docs/memory_management_qa.md) |
+| **Common Language Runtime (CLR)** | [CLR.md](docs/CLR.md) | [CLR_qa.md](docs/CLR_qa.md) |
 | **ASP.NET Core Filters** | [Filter.md](docs/Filter.md) | - |
 | **ASP.NET Core Middleware** | [Middleware.md](docs/Middleware.md) | - |
+| **Multithreading & Synchronization** | [Multithreading.md](docs/Multithreading.md) | - |
 
 
 
