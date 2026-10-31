@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using WebApiCore.Filters;
+using WebApiCore.Middleware;
 using WebApiCore.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -79,6 +80,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseRequestLogging(); // Custom request-logging middleware
 app.UseAuthentication();
 app.UseAuthorization();
 

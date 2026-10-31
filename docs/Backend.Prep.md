@@ -233,7 +233,32 @@ public class Program
 
 ---
 ## DI
-Dependency Injection (DI) is a design pattern used in software development to achieve `Inversion of Control (IoC)`. It allows a class to `receive its dependencies from an external source` rather `than creating them internally`. This approach promotes loose coupling between components, enhances `code modularity`, and `improves testability`.
+Dependency Injection (DI) is a technique where an object receives the dependencies it needs from the outside instead of creating those dependencies itself.
+>Dependency Injection (DI) হলো একটি সফটওয়্যার ডিজাইন প্যাটার্ন যা Inversion of Control (IoC) বাস্তবায়ন করে। সহজ কথায়, একটি ক্লাসের প্রয়োজনীয় ডিপেন্ডেন্সি (অবজেক্ট বা সার্ভিস) ক্লাসটির ভেতরে তৈরি না করে বাইরে থেকে সরবরাহ (Inject) করাই হলো ডিপেন্ডেন্সি ইনজেকশন।
+>
+> This approach promotes loose coupling between components, enhances `code modularity`, and `improves testability`.
+
+```c#
+    public class OrderService
+    {
+        private readonly IOrderRepository _repository;
+        private readonly INotificationService _notifier;
+
+        // Both dependencies are required to construct a valid OrderService
+        public OrderService(IOrderRepository repository, INotificationService notifier)
+        {
+            _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+            _notifier = notifier ?? throw new ArgumentNullException(nameof(notifier));
+        }
+    }
+
+    // IDatabaseExporter is only needed for exporting, not general report creation
+    public void ExportReport(ReportData data, IDatabaseExporter exporter)
+    {
+        exporter.Export(data);
+    }
+```
+
 ### Singleton: One instance for the entire application lifecycle
 A singleton service is created once and reused for the entire lifetime of the application (until the app shuts down). All classes that request this service will receive the same instance.
 1. Use Singleton for stateless services (e.g., logging, caching) that don’t need to change during the application’s lifetime.
@@ -267,7 +292,33 @@ A transient service is created every time it is requested from the DI container.
 **When do Use Transient?**
 1. Use transient services when stateless behavior is needed, and a new instance is required every time, such as lightweight services with no shared state.
 
+---
+### Captive Dependency
+When a Singleton service depends on and injects a Scoped service directly via its constructor, it creates a Captive Dependency.
+> - **Thread Safety Issues & Race Conditions:** Scoped services (like EF Core's DbContext or HTTP context accessors) are not thread-safe. When concurrent threads invoke the Singleton, they will access the exact same captured Scoped instance simultaneously, corrupting internal state or throwing exceptions (e.g., InvalidOperationException: A second operation was started on this context instance before a previous operation completed).
+> - **Stale / Dirty Data:** Scoped instances often maintain local state or identity maps. A long-lived instance never clears its tracked entities, leading to stale queries, dirty writes, and incorrect business outcomes.
 
+
+> Solution: Do not inject the scoped dependency directly into the constructor. Instead, inject `IServiceScopeFactory (or IServiceProvider)`, create an explicit, short-lived scope inside the method, and dispose of it when done:
+
+```c#
+    public class CacheManager // Singleton
+    {
+        private readonly IServiceScopeFactory _scopeFactory;
+
+        public CacheManager(IServiceScopeFactory scopeFactory)
+        {
+            _scopeFactory = scopeFactory;
+        }
+
+        public async Task RefreshCacheAsync()
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.PerformWorkAsync();
+        } // dbContext is disposed here cleanly
+    }
+```
 ---
 ## Transaction
 A transaction is a sequence of operations that are treated as a `single unit`. The operations inside a transaction must meet the `ACID` properties:
@@ -286,7 +337,6 @@ try
 {
     // Add order to the database
     _context.Orders.Add(order);
-    await _context.SaveChangesAsync();
 
     // Add payment to the database
     _context.Payments.Add(payment);

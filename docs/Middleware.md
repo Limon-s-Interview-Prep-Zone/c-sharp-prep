@@ -3,7 +3,7 @@
 ---
 
 ## 1. English Definition & Concept
-In ASP.NET Core, **Middleware** is software assembled into an application's request processing pipeline to handle HTTP requests and responses. Each middleware component in the pipeline:
+Middleware is a component in the HTTP request pipeline that can inspect a request, perform work, call the next component, and inspect or modify the response. Each middleware component in the pipeline:
 1. Chooses whether to pass the request to the next component in the pipeline.
 2. Can perform work before and after the next component in the pipeline is invoked.
 
