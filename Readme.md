@@ -63,6 +63,7 @@ dotnet run
 | **ASP.NET Core Filters** | [Filter.md](docs/Filter.md) | - |
 | **ASP.NET Core Middleware** | [Middleware.md](docs/Middleware.md) | - |
 | **Multithreading & Synchronization** | [Multithreading.md](docs/Multithreading.md) | - |
+| **C# Core Interview** | [CSharpCoreInterview.md](docs/CSharpCoreInterview.md) | - |
 
 
 
